@@ -14,7 +14,7 @@ from functools import lru_cache
 import pathlib, difflib, tempfile
 
 
-APP_VER = '28.03.2025'
+APP_VER = '03.04.2025'
 APP_NAME = 'Экранизатор'
 KEY_NAME = 'Экранизатор'
 FILETYPES_IMG = ('.jpg', '.jpeg', '.jpe', '.bmp', '.png', '.webp')
@@ -215,7 +215,7 @@ class Ffmpeg:
 		if not os.path.isfile(filepath): return ""
 		text = Ffmpeg.run_cached(f'-hide_banner -i "{filepath}"')
 		#	title           : Глава первая - Об авторе
-		match = re.search('(?<!\s{5})' + tag + r'\s*: (.*)', text) # не более 4 пробелов перед тегом.
+		match = re.search('^ {0,4}' + tag + r'\s*: (.*)', text, re.MULTILINE) # не более 4 пробелов, первый уровень вложенности
 		result = match.group(1) if (match and self.not_shit(match.group(1))) else ""
 		dbg(f"{os.path.basename(filepath)} {tag} = '{result}'")		
 		return result
@@ -360,34 +360,37 @@ ffmpeg = Ffmpeg()
 # Ищем музыкальные вставки
 log("...изучаю содержимое...", temp=True)
 
-kw_bridge = ["перебивка", "переход", "отбивка", "разделитель", "проигрыш", "встав-ка", "музыка", 
+files_audio = [f for f in base.files if f.lower().endswith(FILETYPES_AUDIO)]
+files_img = [f for f in base.files if f.lower().endswith(FILETYPES_IMG)]
+
+kw_bridge = ["перебивка", "переход", "отбивка", "разделитель", "проигрыш", "встав)ка", "музыка", 
 			 "джингл", "music", "interlude", "transition", "segue", "bumper", "stinger", "jingle", 
 			 "bridge", "cortinilla", "intermezzo", "stacco", "uberleitung"]
 
-kw_intro = ["начало", "опенинг", "заст*ав ка", "int*r*_o", "вступление", "стартовая музыка", 
+kw_intro = ["начало", "опенинг", "заст*ав ка", "int*r*_o", "вступлен=ие",  
 			"beginning", "opening", "start", "начало главы", "nachalo"]
 
-kw_outro = ["конец", "окончание", "завершение", "out-r- o", "эндинг", "ending", "final", 
+kw_outro = ["конец", "окончание", "заверше-ние", "out-r- o", "эндинг", "ending", "final", 
 			"end music", "конец главы", "концов-к_а", "konec", "closing"]
 	
-bridge = find_best_match(base.files, kw_bridge)
-intro = find_best_match(base.files, kw_intro)
-outro = find_best_match(base.files, kw_outro)
+bridge = find_best_match(files_audio, kw_bridge)
+intro = find_best_match(files_audio, kw_intro)
+outro = find_best_match(files_audio, kw_outro)
 
 bridge_dur = ffmpeg.get_duration(bridge)
 intro_dur = ffmpeg.get_duration(intro)
 outro_dur = ffmpeg.get_duration(outro)
 
-if bridge in base.files: base.files.remove(bridge)
-if intro in base.files: base.files.remove(intro)	
-if outro in base.files: base.files.remove(outro)
+if bridge in files_audio: files_audio.remove(bridge)
+if intro in files_audio: files_audio.remove(intro)	
+if outro in files_audio: files_audio.remove(outro)
 
 
 # Ищем обложку
-picture = next((f for f in base.files if f.lower().endswith(FILETYPES_IMG)), None)
-if picture:
-	base.files.remove(picture)	
+if files_img:
+	picture = files_img[0]  
 else:
+	picture = None
 	err("В указанной папке нет ни одной картинки для обложки.")
 	log("Поддерживаются файлы: " + ' '.join(FILETYPES_IMG))
 	base.finish()
@@ -395,8 +398,7 @@ else:
 	
 # Ищем главы книги
 # Сначала ищем главы с цифровыми обозначениями "01 - Пролог.wav". Если таких нет, берём всё подряд.
-audio = ([f for f in base.files if f.lower().endswith(FILETYPES_AUDIO) and os.path.basename(f)[0].isdigit()]
-	  or [f for f in base.files if f.lower().endswith(FILETYPES_AUDIO)])
+audio = ([f for f in files_audio if os.path.basename(f)[0].isdigit()]  or  files_audio)
 
 if not audio: 
 	err("В указанной папке нет аудиозаписей.")
