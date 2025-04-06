@@ -14,7 +14,7 @@ from functools import lru_cache
 import pathlib, difflib, tempfile
 
 
-APP_VER = '03.04.2025'
+APP_VER = '06.04.2025'
 APP_NAME = 'Экранизатор'
 KEY_NAME = 'Экранизатор'
 FILETYPES_IMG = ('.jpg', '.jpeg', '.jpe', '.bmp', '.png', '.webp')
@@ -47,7 +47,7 @@ class Base:
 	
 	def __init__(self, gather_files=True, clear_console=True, **kwargs):
 		sys.excepthook = Base.on_error
-		Base.debug = ("--debug" in sys.argv) or ("--debug" in os.path.basename(__file__)) or ("--debug" in os.path.basename(sys.executable))	
+		Base.debug = Base.flag_exists("--debug")
 		Base.terminal_width = shutil.get_terminal_size().columns - 1
 		globals()["log"] = Base.log
 		globals()["dbg"] = Base.dbg
@@ -131,6 +131,9 @@ class Base:
 			kernel32.ReleaseMutex(Base.mutex)
 			kernel32.CloseHandle(Base.mutex)
 			Base.mutex = None
+	
+	def flag_exists(flag): # --debug 
+		return (flag in sys.argv) or (flag in os.path.basename(__file__)) or (flag in os.path.basename(sys.executable))
 		
 	# Собрать переданные файлы, которые требуется обработать. Собираем только разрешённые типы. 
 	# Если передан unfold_dirs, вытащим файлы также из переданных папок (можно рекурсивно по желанию).
@@ -416,7 +419,7 @@ book_author = ", ".join(dict.fromkeys(ffmpeg.get_tag(audio, "artist"))) # авт
 book_reader = ", ".join(dict.fromkeys(ffmpeg.get_tag(audio, "album_artist"))) or \
 			  ", ".join(dict.fromkeys(ffmpeg.get_tag(audio, "comment"))) # литрес пишет чтеца в комменты
 
-total_dur = int(sum(audio_durs) + intro_dur + outro_dur + bridge_dur * (len(audio) - 1) + 3) # три запасных секунды тишины в конец
+total_dur = int(sum(audio_durs) + intro_dur + outro_dur + bridge_dur * (len(audio) - 1)) # пока что приблизительный тайминг
 total_mb = 1 + total_dur * 75 / 8 / 1024 # Результирующий битрейт ожидается от 64 до 80 кбит/с
 
 
@@ -432,7 +435,8 @@ for row in zip(audio, audio_durs, audio_titles):
 	dbg(*row)
 
 log("\n" + f"Получится видео длиной {seconds_to_timestamp(total_dur)} и весом {total_mb:.0f} Мб.")
-input("\nНажмите Enter, чтобы начать.\n")
+if not Base.flag_exists("--start"):
+	input("\nНажмите Enter, чтобы начать.\n")
 Base.wait_another_copy()
 tmp_cleanup()
 time_start = time.time()
@@ -455,20 +459,37 @@ ffmpeg.run_all_tasks()
 log("Уточняю длину...")
 
 audio_durs = ffmpeg.get_duration(tmp_audio) # Уточняем длину, т.к. mp3 vbr определяется сильно неточно
-total_dur = int(sum(audio_durs) + intro_dur + outro_dur + bridge_dur * (len(audio) - 1) + 3) # три секунды в запас
+total_dur = int(sum(audio_durs) + intro_dur + outro_dur + bridge_dur * (len(audio) - 1) + 2) # три секунды в запас
 
 
-### Создаём видеодорожку нужной длины      
+### Создаём видеодорожку нужной длины
 
-tmp_video = tmp_name('ekr-tmp-vid.mp4')
+tmp_video_a = tmp_name('ekr-tmp-vid-a.ts')  # Хак для рутуба. Склеиваем секунду обычного видео (а) и длинный хвост сильно сжатого (b).
+tmp_video_b = tmp_name('ekr-tmp-vid-b.ts')  
+tmp_video = tmp_name('ekr-tmp-vid.ts')      
 
-# слишком редкие ключевые кадры = медленная перемотка. Ставим один хотя бы раз в 20 минут. Лучше конечно 10, но это удручающе на размер влияет
-cmd = f'-y -hide_banner -loglevel {loglevel} -r 0.3 -i "{picture}" -vf "scale=w=if(gt(iw*ih\,1920*1080)\,iw*min(1920/iw\,1920/ih)\,iw):h=-2:in_range=full:out_range=limited, pad=ceil(iw/2)*2:ceil(ih/2)*2, tpad=stop_mode=clone:stop_duration=3600100" -an -c:v libx264 -pix_fmt yuv420p -preset faster -x264-params "rc-lookahead=1:keyint=360:min-keyint=180:ref=0:subme=0:no-scenecut=1:bframes=0:qp=20" -bsf:v filter_units=remove_types=6 -frag_duration 1800111222 -t {total_dur} "{tmp_video}"'
-
-
+# Обычное видео, 1 секунда (или заставка канала)
+cmd = fr'-y -hide_banner -loglevel {loglevel} -r 25 -i "{picture}" -vf "scale=w=if(gt(iw*ih\,1920*1080)\,iw*min(1920/iw\,1920/ih)\,iw):h=-2:in_range=full:out_range=limited, pad=ceil(iw/2)*2:ceil(ih/2)*2, tpad=stop_mode=clone:stop_duration=3600100" -an -c:v libx264 -pix_fmt yuv420p -preset faster -x264-params "rc-lookahead=1:keyint=4:ref=0:subme=0:no-scenecut=1:bframes=0:qp=20" -force_key_frames "expr:lte(n,2)" -t 1 "{tmp_video_a}"'
 
 ffmpeg.add_task("Готовлю видеодорожку...", cmd)
-ffmpeg.run_all_tasks()
+
+# Сильно сжатое видео
+# Слишком редкие ключевые кадры = медленная перемотка. Слишком частые - огромный размер. Ставим один хотя бы раз в 20 минут (-g 360).
+cmd = fr'-y -hide_banner -loglevel {loglevel} -r 0.35 -i "{picture}" -vf "scale=w=if(gt(iw*ih\,1920*1080)\,iw*min(1920/iw\,1920/ih)\,iw):h=-2:in_range=full:out_range=limited, pad=ceil(iw/2)*2:ceil(ih/2)*2, tpad=stop_mode=clone:stop_duration=3600100" -an -c:v libx264 -pix_fmt yuv420p -preset faster -x264-params "rc-lookahead=1:keyint=300:ref=0:subme=0:no-scenecut=1:bframes=0:qp=20" -t {total_dur} "{tmp_video_b}"'
+
+ffmpeg.add_task("", cmd)
+
+# Склеиваем
+tmp_vlist = tmp_name('ekr-tmp-vid.txt')
+with open(tmp_vlist, 'w', encoding="utf-8") as file:
+	file.write(f"file '{tmp_video_a}'" + "\n")
+	file.write(f"file '{tmp_video_b}'" + "\n")
+
+cmd = fr'-y -hide_banner -loglevel {loglevel} -f concat -safe 0 -i "{tmp_vlist}" -an -c copy -bsf:v filter_units=remove_types=6 "{tmp_video}"'
+
+ffmpeg.add_task("", cmd)
+
+ffmpeg.run_all_tasks(mp=False)
 
 
 ### Накидываем плейлист для будущей аудиодорожки
@@ -524,8 +545,8 @@ with open(tmp_toc, 'w', encoding="utf-8") as toc, open(human_toc, 'w', encoding=
 ### Объединяем аудио с видео 
 the_result = os.path.join(base.output_dir, sanitize_filename(book_name) + ".mp4")
 
-# Дллина mp4-сегмента тоже максимум полчаса, иначе через 10 часов сплошного видео скорость кодирования упадёт втрое
-cmd = f'-y -hide_banner -loglevel {loglevel} -i "{tmp_toc}" -i "{tmp_video}" -f concat -safe 0 -i "{tmp_alist}" -c:v copy -c:a copy -movflags +faststart -frag_duration 1800111222 -t {int(total_dur)} "{the_result}"'
+# Длина mp4-сегмента максимум полчаса(1800 000 000), иначе через 10 часов сплошного видео скорость кодирования упадёт втрое.
+cmd = f'-y -hide_banner -loglevel {loglevel} -i "{tmp_toc}" -i "{tmp_video}" -f concat -safe 0 -i "{tmp_alist}" -c:v copy -c:a copy -movflags +faststart -frag_duration 2000111222 -t {int(total_dur)} "{the_result}"'
 
 ffmpeg.add_task("Сохраняю результат...", cmd)
 
@@ -538,7 +559,7 @@ ratio = max(total_dur, 0.1) / max(time_exec, 0.1)
 dbg("Временные файлы сохранены в " + tmp_name("..."))
 if not base.debug: tmp_cleanup()
 
-base.finish(text = '\n' + f'Готово. Затрачено времени {seconds_to_timestamp(time_exec)}, скорость х {int(ratio)}', wait=True)
+base.finish(text = '\n' + f'Готово. Затрачено времени {seconds_to_timestamp(time_exec)}, скорость х {int(ratio)}', wait = not Base.flag_exists("--start"))
 
 
 

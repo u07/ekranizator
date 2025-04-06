@@ -164,12 +164,14 @@ cd ffmpeg
  --disable-everything \
  --disable-network \
  --disable-autodetect \
+ --enable-asm --enable-x86asm --enable-optimizations \
  --enable-small \
  --enable-decoder=mp3,mp3float,pcm*,adpcm_ima_wav,flac,libopus \
  --enable-decoder=png,jpeg,bmp,webp,mjpeg \
- --enable-demuxer=wav,mp3,flac,ogg,mov,image2,concat,ffmetadata \
+ --enable-demuxer=wav,mp3,flac,ogg,mov,image2,concat,ffmetadata,mpegts \
+ --enable-parser=h264 \
  --enable-protocol=file \
- --enable-muxer=mp4,ogg,null \
+ --enable-muxer=mp4,mpegts,ogg,null \
  --enable-encoder=anull,libopus,libx264 \
  --enable-filter=scale,pad,tpad,aresample \
  --enable-bsf=filter_units,h264_metadata \
@@ -192,6 +194,17 @@ make && make install
 
 # Компилим скрипт в программу
 
+cd "C:\Users\Ленин\Desktop\Экранизатор. Аудиокнижки на рутуб\"
+
+%localappdata%\Programs\Python\Python38\Scripts\pyinstaller.exe "Экранизатор.py" --onefile -i "Материалы\иконка\MAINICON256.ico"
+
+
+
+
+____
+
+Альтернативы:
+
 py -3.8-32 -m PyInstaller "D:\...\check_eksmo.py" --onefile -i "D:\...\giza_pyramidki_all_sizes.ico"
 
 Установить пакеты под 32-бит версию и обратно:
@@ -207,8 +220,11 @@ py -3.8-32 -m PyInstaller  check_eksmo.py --onefile -i giza_pyramidki_all_sizes.
 
 Пути:
 
+%localappdata%\programs\python\python38\lib\site-packages
+
 C:\Users\user\AppData\Local\Programs\Python\Python38-32\Scripts\pyinstaller.exe
 C:\Users\user\AppData\Roaming\Python\Python38\Scripts\pyinstaller.exe
+
 
 
 
